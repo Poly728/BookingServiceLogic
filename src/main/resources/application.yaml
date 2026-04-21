@@ -2,7 +2,7 @@ spring:
   application:
     name: booking-service-logic
   profiles:
-    active: test
+    active: dev
 
   # JPA Configuration
   jpa:
