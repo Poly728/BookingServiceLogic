@@ -1,0 +1,25 @@
+spring:
+  # PostgreSQL Database for Production
+  datasource:
+    url: jdbc:postgresql://localhost:5432/booking_db
+    username: postgres
+    password: 3452
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  liquibase:
+    enabled: true
+    change-log: classpath:db/changelog/db.changelog-master.yaml
+    contexts: prod
+
+logging:
+  level:
+    org.example.bookingservicelogic: INFO
+    org.springframework.web: WARN

@@ -1,0 +1,22 @@
+spring:
+  # Test Configuration - will be overridden by Testcontainers
+  datasource:
+    url: jdbc:tc:postgresql:15:///booking_test_db
+    username: test
+    password: test
+    driver-class-name: org.testcontainers.jdbc.ContainerDatabaseDriver
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: true
+
+  liquibase:
+    enabled: true
+    change-log: classpath:db/changelog/db.changelog-master.yaml
+    contexts: test
+
+logging:
+  level:
+    org.example.bookingservicelogic: DEBUG
+    org.testcontainers: INFO
