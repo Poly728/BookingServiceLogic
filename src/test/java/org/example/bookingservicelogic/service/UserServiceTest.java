@@ -175,6 +175,35 @@ class UserServiceTest {
         }
 
         @Test
+        @DisplayName("Should throw exception when user not found by username")
+        void shouldThrowWhenUserNotFoundByUsername() {
+            when(userRepository.findByUsername("missing")).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> userService.getUserByUsername("missing"))
+                    .isInstanceOf(ResourceNotFoundException.class);
+        }
+
+        @Test
+        @DisplayName("Should get user by email")
+        void shouldGetUserByEmail() {
+            when(userRepository.findByEmail("test@example.com")).thenReturn(Optional.of(testUser));
+            when(userMapper.toResponse(testUser)).thenReturn(testUserResponse);
+
+            UserResponse result = userService.getUserByEmail("test@example.com");
+            assertThat(result).isNotNull();
+            assertThat(result.getEmail()).isEqualTo("test@example.com");
+        }
+
+        @Test
+        @DisplayName("Should throw exception when user not found by email")
+        void shouldThrowWhenUserNotFoundByEmail() {
+            when(userRepository.findByEmail("missing@example.com")).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> userService.getUserByEmail("missing@example.com"))
+                    .isInstanceOf(ResourceNotFoundException.class);
+        }
+
+        @Test
         @DisplayName("Should get all users with pagination")
         void shouldGetAllUsersWithPagination() {
             Pageable pageable = PageRequest.of(0, 10);
@@ -188,6 +217,30 @@ class UserServiceTest {
             assertThat(result).isNotNull();
             assertThat(result.getContent()).hasSize(1);
             assertThat(result.getTotalElements()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("Should get users by role")
+        void shouldGetUsersByRole() {
+            Pageable pageable = PageRequest.of(0, 10);
+            Page<User> userPage = new PageImpl<>(List.of(testUser), pageable, 1);
+            when(userRepository.findByRole(Role.USER, pageable)).thenReturn(userPage);
+            when(userMapper.toResponseList(anyList())).thenReturn(List.of(testUserResponse));
+
+            var result = userService.getUsersByRole(Role.USER, pageable);
+            assertThat(result.getContent()).hasSize(1);
+        }
+
+        @Test
+        @DisplayName("Should search users")
+        void shouldSearchUsers() {
+            Pageable pageable = PageRequest.of(0, 10);
+            Page<User> userPage = new PageImpl<>(List.of(testUser), pageable, 1);
+            when(userRepository.searchUsers("test", pageable)).thenReturn(userPage);
+            when(userMapper.toResponseList(anyList())).thenReturn(List.of(testUserResponse));
+
+            var result = userService.searchUsers("test", pageable);
+            assertThat(result.getContent()).hasSize(1);
         }
     }
 
@@ -212,6 +265,37 @@ class UserServiceTest {
 
             assertThat(result).isNotNull();
             verify(userRepository).save(any(User.class));
+        }
+
+        @Test
+        @DisplayName("Should throw when updating to duplicate email")
+        void shouldThrowWhenUpdatingDuplicateEmail() {
+            UserUpdateRequest updateRequest = UserUpdateRequest.builder()
+                    .email("new@example.com")
+                    .build();
+
+            when(userRepository.findById(1L)).thenReturn(Optional.of(testUser));
+            when(userRepository.existsByEmail("new@example.com")).thenReturn(true);
+
+            assertThatThrownBy(() -> userService.updateUser(1L, updateRequest))
+                    .isInstanceOf(DuplicateResourceException.class);
+        }
+
+        @Test
+        @DisplayName("Should encode password when updating password")
+        void shouldEncodePasswordWhenUpdatingPassword() {
+            UserUpdateRequest updateRequest = UserUpdateRequest.builder()
+                    .password("newPassword")
+                    .build();
+
+            when(userRepository.findById(1L)).thenReturn(Optional.of(testUser));
+            doNothing().when(userMapper).updateEntityFromRequest(any(), any());
+            when(passwordEncoder.encode("newPassword")).thenReturn("encodedNewPassword");
+            when(userRepository.save(any(User.class))).thenReturn(testUser);
+            when(userMapper.toResponse(any(User.class))).thenReturn(testUserResponse);
+
+            userService.updateUser(1L, updateRequest);
+            verify(passwordEncoder).encode("newPassword");
         }
     }
 
@@ -270,6 +354,22 @@ class UserServiceTest {
             assertThat(result).isNotNull();
             assertThat(result.isSuccess()).isFalse();
         }
+
+        @Test
+        @DisplayName("Should fail authentication when user disabled")
+        void shouldFailAuthenticationWhenUserDisabled() {
+            LoginRequest loginRequest = LoginRequest.builder()
+                    .usernameOrEmail("testuser")
+                    .password("password123")
+                    .build();
+            testUser.setEnabled(false);
+            when(userRepository.findByUsername("testuser")).thenReturn(Optional.of(testUser));
+
+            AuthResponse result = userService.authenticate(loginRequest);
+
+            assertThat(result.isSuccess()).isFalse();
+            assertThat(result.getMessage()).contains("disabled");
+        }
     }
 
     @Nested
@@ -285,6 +385,30 @@ class UserServiceTest {
             userService.deleteUser(1L);
 
             verify(userRepository).delete(testUser);
+        }
+
+        @Test
+        @DisplayName("Should change user role")
+        void shouldChangeUserRole() {
+            when(userRepository.findById(1L)).thenReturn(Optional.of(testUser));
+            when(userRepository.save(any(User.class))).thenReturn(testUser);
+            when(userMapper.toResponse(any(User.class))).thenReturn(testUserResponse);
+
+            UserResponse result = userService.changeUserRole(1L, Role.ADMIN);
+            assertThat(result).isNotNull();
+            assertThat(testUser.getRole()).isEqualTo(Role.ADMIN);
+        }
+
+        @Test
+        @DisplayName("Should set user enabled flag")
+        void shouldSetUserEnabled() {
+            when(userRepository.findById(1L)).thenReturn(Optional.of(testUser));
+            when(userRepository.save(any(User.class))).thenReturn(testUser);
+            when(userMapper.toResponse(any(User.class))).thenReturn(testUserResponse);
+
+            UserResponse result = userService.setUserEnabled(1L, false);
+            assertThat(result).isNotNull();
+            assertThat(testUser.getEnabled()).isFalse();
         }
     }
 }

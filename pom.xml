@@ -19,6 +19,7 @@
         <mapstruct.version>1.5.5.Final</mapstruct.version>
         <lombok-mapstruct-binding.version>0.2.0</lombok-mapstruct-binding.version>
         <testcontainers.version>1.19.8</testcontainers.version>
+        <spring-boot.aot.skip>true</spring-boot.aot.skip>
     </properties>
     <dependencies>
         <!-- Spring Boot Starters -->

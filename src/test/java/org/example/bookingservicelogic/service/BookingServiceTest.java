@@ -1,6 +1,7 @@
 package org.example.bookingservicelogic.service;
 
 import org.example.bookingservicelogic.dto.request.BookingCreateRequest;
+import org.example.bookingservicelogic.dto.request.BookingUpdateRequest;
 import org.example.bookingservicelogic.dto.response.BookingResponse;
 import org.example.bookingservicelogic.entity.Booking;
 import org.example.bookingservicelogic.entity.Hotel;
@@ -25,6 +26,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageRequest;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -205,6 +207,36 @@ class BookingServiceTest {
             assertThatThrownBy(() -> bookingService.createBooking(createRequest))
                     .isInstanceOf(BookingConflictException.class);
         }
+
+        @Test
+        @DisplayName("Should throw exception when check-in date is in the past")
+        void shouldThrowWhenCheckInDateInPast() {
+            createRequest.setCheckInDate(LocalDate.now().minusDays(1));
+
+            assertThatThrownBy(() -> bookingService.createBooking(createRequest))
+                    .isInstanceOf(BadRequestException.class)
+                    .hasMessageContaining("in the past");
+        }
+
+        @Test
+        @DisplayName("Should throw exception when check-in and check-out are equal")
+        void shouldThrowWhenDatesAreEqual() {
+            createRequest.setCheckOutDate(createRequest.getCheckInDate());
+
+            assertThatThrownBy(() -> bookingService.createBooking(createRequest))
+                    .isInstanceOf(BadRequestException.class)
+                    .hasMessageContaining("after check-in");
+        }
+
+        @Test
+        @DisplayName("Should throw exception when booking dates are null")
+        void shouldThrowWhenDatesAreNull() {
+            createRequest.setCheckInDate(null);
+
+            assertThatThrownBy(() -> bookingService.createBooking(createRequest))
+                    .isInstanceOf(BadRequestException.class)
+                    .hasMessageContaining("required");
+        }
     }
 
     @Nested
@@ -222,6 +254,7 @@ class BookingServiceTest {
 
             assertThat(result).isNotNull();
             verify(bookingRepository).save(any(Booking.class));
+            assertThat(testBooking.getStatus()).isEqualTo(BookingStatus.CONFIRMED);
         }
 
         @Test
@@ -274,6 +307,39 @@ class BookingServiceTest {
             assertThat(result).isNotNull();
             verify(bookingRepository).save(any(Booking.class));
         }
+
+        @Test
+        @DisplayName("Should throw exception when confirming non-pending booking")
+        void shouldThrowWhenConfirmingNonPendingBooking() {
+            testBooking.setStatus(BookingStatus.CANCELLED);
+            when(bookingRepository.findById(1L)).thenReturn(Optional.of(testBooking));
+
+            assertThatThrownBy(() -> bookingService.confirmBooking(1L))
+                    .isInstanceOf(BadRequestException.class)
+                    .hasMessageContaining("Cannot transition");
+        }
+
+        @Test
+        @DisplayName("Should throw exception when checking in non-confirmed booking")
+        void shouldThrowWhenCheckingInWrongStatus() {
+            testBooking.setStatus(BookingStatus.PENDING);
+            when(bookingRepository.findById(1L)).thenReturn(Optional.of(testBooking));
+
+            assertThatThrownBy(() -> bookingService.checkIn(1L))
+                    .isInstanceOf(BadRequestException.class)
+                    .hasMessageContaining("confirmed");
+        }
+
+        @Test
+        @DisplayName("Should throw exception when checking out non-checked-in booking")
+        void shouldThrowWhenCheckingOutWrongStatus() {
+            testBooking.setStatus(BookingStatus.CONFIRMED);
+            when(bookingRepository.findById(1L)).thenReturn(Optional.of(testBooking));
+
+            assertThatThrownBy(() -> bookingService.checkOut(1L))
+                    .isInstanceOf(BadRequestException.class)
+                    .hasMessageContaining("checked-in");
+        }
     }
 
     @Nested
@@ -299,6 +365,92 @@ class BookingServiceTest {
 
             assertThatThrownBy(() -> bookingService.getBookingById(1L))
                     .isInstanceOf(ResourceNotFoundException.class);
+        }
+
+        @Test
+        @DisplayName("Should get bookings pages and aggregate data")
+        void shouldGetBookingPagesAndAggregates() {
+            var pageable = PageRequest.of(0, 10);
+            var bookingPage = new org.springframework.data.domain.PageImpl<>(List.of(testBooking), pageable, 1);
+
+            when(bookingRepository.findAll(pageable)).thenReturn(bookingPage);
+            when(bookingRepository.findByUserIdOrderByCreatedAtDesc(1L, pageable)).thenReturn(bookingPage);
+            when(bookingRepository.findByRoomIdOrderByCheckInDateDesc(1L, pageable)).thenReturn(bookingPage);
+            when(bookingRepository.findByHotelId(1L, pageable)).thenReturn(bookingPage);
+            when(bookingRepository.findByStatus(BookingStatus.PENDING, pageable)).thenReturn(bookingPage);
+            when(bookingRepository.findByUserIdAndStatus(1L, BookingStatus.PENDING, pageable)).thenReturn(bookingPage);
+            when(bookingRepository.findUpcomingBookings(eq(1L), any(LocalDate.class), eq(pageable))).thenReturn(bookingPage);
+            when(bookingRepository.findPastBookings(eq(1L), any(LocalDate.class), eq(pageable))).thenReturn(bookingPage);
+            when(bookingRepository.findByCheckInDateAndStatus(any(LocalDate.class), eq(BookingStatus.CONFIRMED))).thenReturn(List.of(testBooking));
+            when(bookingRepository.findByCheckOutDateAndStatus(any(LocalDate.class), eq(BookingStatus.CHECKED_IN))).thenReturn(List.of(testBooking));
+            when(bookingMapper.toResponseList(anyList())).thenReturn(List.of(testBookingResponse));
+            when(bookingRepository.calculateTotalRevenueByHotel(1L)).thenReturn(BigDecimal.valueOf(1500));
+            when(bookingRepository.countByHotelIdAndStatus(1L, BookingStatus.CONFIRMED)).thenReturn(4L);
+
+            assertThat(bookingService.getAllBookings(pageable).getContent()).hasSize(1);
+            assertThat(bookingService.getBookingsByUser(1L, pageable).getContent()).hasSize(1);
+            assertThat(bookingService.getBookingsByRoom(1L, pageable).getContent()).hasSize(1);
+            assertThat(bookingService.getBookingsByHotel(1L, pageable).getContent()).hasSize(1);
+            assertThat(bookingService.getBookingsByStatus(BookingStatus.PENDING, pageable).getContent()).hasSize(1);
+            assertThat(bookingService.getBookingsByUserAndStatus(1L, BookingStatus.PENDING, pageable).getContent()).hasSize(1);
+            assertThat(bookingService.getUpcomingBookings(1L, pageable).getContent()).hasSize(1);
+            assertThat(bookingService.getPastBookings(1L, pageable).getContent()).hasSize(1);
+            assertThat(bookingService.getTodayCheckIns()).hasSize(1);
+            assertThat(bookingService.getTodayCheckOuts()).hasSize(1);
+            assertThat(bookingService.calculateHotelRevenue(1L)).isEqualByComparingTo("1500");
+            assertThat(bookingService.countBookingsByStatus(1L, BookingStatus.CONFIRMED)).isEqualTo(4L);
+        }
+
+        @Test
+        @DisplayName("Should update booking and delete booking")
+        void shouldUpdateAndDeleteBooking() {
+            BookingUpdateRequest request = BookingUpdateRequest.builder()
+                    .checkInDate(LocalDate.now().plusDays(8))
+                    .checkOutDate(LocalDate.now().plusDays(11))
+                    .build();
+
+            when(bookingRepository.findById(1L)).thenReturn(Optional.of(testBooking));
+            when(bookingRepository.findOverlappingBookings(any(), any(), any())).thenReturn(Collections.emptyList());
+            when(bookingRepository.save(any(Booking.class))).thenReturn(testBooking);
+            when(bookingMapper.toResponse(any(Booking.class))).thenReturn(testBookingResponse);
+
+            BookingResponse updated = bookingService.updateBooking(1L, request);
+            assertThat(updated).isNotNull();
+            verify(bookingRepository).save(any(Booking.class));
+
+            bookingService.deleteBooking(1L);
+            verify(bookingRepository).delete(testBooking);
+        }
+
+        @Test
+        @DisplayName("Should throw conflict on update when overlapping booking exists")
+        void shouldThrowConflictOnUpdate() {
+            Booking anotherBooking = Booking.builder().id(999L).build();
+            BookingUpdateRequest request = BookingUpdateRequest.builder()
+                    .checkInDate(LocalDate.now().plusDays(8))
+                    .checkOutDate(LocalDate.now().plusDays(11))
+                    .build();
+            when(bookingRepository.findById(1L)).thenReturn(Optional.of(testBooking));
+            when(bookingRepository.findOverlappingBookings(any(), any(), any())).thenReturn(new java.util.ArrayList<>(List.of(anotherBooking)));
+
+            assertThatThrownBy(() -> bookingService.updateBooking(1L, request))
+                    .isInstanceOf(BookingConflictException.class);
+        }
+
+        @Test
+        @DisplayName("Should allow update when conflict is current booking itself")
+        void shouldAllowUpdateWhenOnlySelfConflictExists() {
+            BookingUpdateRequest request = BookingUpdateRequest.builder()
+                    .checkInDate(LocalDate.now().plusDays(8))
+                    .checkOutDate(LocalDate.now().plusDays(11))
+                    .build();
+            when(bookingRepository.findById(1L)).thenReturn(Optional.of(testBooking));
+            when(bookingRepository.findOverlappingBookings(any(), any(), any())).thenReturn(new java.util.ArrayList<>(List.of(testBooking)));
+            when(bookingRepository.save(any(Booking.class))).thenReturn(testBooking);
+            when(bookingMapper.toResponse(any(Booking.class))).thenReturn(testBookingResponse);
+
+            BookingResponse updated = bookingService.updateBooking(1L, request);
+            assertThat(updated).isNotNull();
         }
     }
 }
